@@ -2,7 +2,7 @@
 
 English | [中文](README.zh-CN.md)
 
-A Claude Code **mod** that shows rate limits, tokens, live tokens per second, cost and context fill as a row of colored pills above the prompt, updated in real time.
+A Claude Code **mod** that shows rate limits, tokens, live tokens per second, cost and context fill as a row of colored pills above the prompt, updated in real time. Press 📈 for window stats: what your 5h and 7d windows are worth at API prices, your pace, and how many tokens are left per model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/band-dark.png">
@@ -32,6 +32,37 @@ The pills always stay on one line. As the window narrows, they shrink step by st
   <source media="(prefers-color-scheme: dark)" srcset="docs/band-narrow-dark.png">
   <img alt="Compact layout in a narrow window" src="docs/band-narrow-light.png" width="600">
 </picture>
+
+### Window stats
+
+Press **📈** at the end of the pills (or run `/usage-band stats`) to open two cards above them, one per rate-limit window. They answer how much the window is worth and how fast you can spend it:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/stats-chart-dark.png">
+  <img alt="Window stats, chart view: API value of the 5h and 7d windows, pace, spend rates and a chart" src="docs/stats-chart-light.png">
+</picture>
+
+- **≈ $177 at API prices**: what the whole window is worth, estimated as the dollars spent in it (at API list prices, the same figure as `/cost`) divided by the share of the limit they used.
+- **On pace to finish at 67%** or **Limit hit in 5d 0h**: where the window ends up at your average pace so far.
+- **Average so far** and **Spend up to** / **Slow down to**: your rate so far, and the rate that lands exactly on the limit at the reset, per hour for 5h and per day for 7d. **≈ 196M Opus** is that rate in tokens of the model you use most, at your usual mix of input, output and cache.
+- **The chart**: usage over the window (solid), your pace projected to the reset (dashed), the budget line to the limit (faint), and in gray the previous window at the same point in its time ("Last week: 7% by now, 47% at reset").
+
+**By model** shows what is left of each window if you spent it all on one model: the same dollars left, divided by each model's price at your token mix. The **used** column is how many tokens of each model the window has seen.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/stats-model-dark.png">
+  <img alt="Window stats, by-model view: tokens left in each window for Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 4.5" src="docs/stats-model-light.png">
+</picture>
+
+**◐** cycles the colors between following the system, light and dark (the cards and pills are drawn as images, so "auto" follows your OS, not the app). The cards are side by side when there is room and stacked when there is not. In the terminal the same figures show as two lines of text.
+
+How the numbers are made:
+
+- The mod writes every request (model, tokens, cost) to a small ledger in its own store, one per session, so **all your Claude Code sessions on this machine count toward the windows they share**. Entries older than 8 days are dropped.
+- **It starts counting when you install it.** A window that began earlier shows `tracked 2h 10m` and is measured from the first reading after that; the next window is fully tracked.
+- **Usage outside Claude Code on this machine** (claude.ai, the apps, another computer) moves the percentage but not the ledger, so it makes the dollar value read low.
+- The previous-window comparison appears once the mod has watched a full window.
+- Model prices (per million tokens, input / output / cache read): Fable 5.1 $10 / $50 / $0.25, Opus 5.5 $4 / $20 / $0.20, Sonnet 5.5 $2 / $10 / $0.20, Haiku 4.5 $1 / $5 / $0.10; cache writes at 1.25× input. They live in `hooks/prices.ts`.
 
 ### Status line mode
 
@@ -80,8 +111,9 @@ claude plugin uninstall usage-band@cyan-mods
 | `/usage-band` | Toggle between the pills and the status line |
 | `/usage-band band` | Show the pills above the prompt |
 | `/usage-band status` | Show the status line below the prompt |
+| `/usage-band stats` | Open or close the window stats above the pills (same as 📈) |
 
-Your choice is remembered across sessions. You can switch while Claude is responding.
+Your choices (display mode, stats open, view, colors) are remembered across sessions. You can switch while Claude is responding.
 
 ## Notes
 
@@ -99,9 +131,10 @@ A mod runs inside Claude Code with your permissions. `claude plugin validate` li
 
 ```
 $.session.usage   read usage, cost, limits and context
+$.session.id      name this session's ledger
 $.clock           timing and periodic refresh
-$.state / $.store keep running totals and the display mode
-$.ui              draw the band and the status line
+$.state / $.store keep running totals, the request ledger, limit readings and your choices
+$.ui              draw the band, the stats cards and the status line
 $.command         register the /usage-band command
 ```
 
@@ -114,7 +147,12 @@ No file access, no network requests, no processes.
 plugins/usage-band/
 ├── .claude-plugin/plugin.json    plugin manifest
 ├── hooks/hooks.json              points to the hooks module
-├── hooks/register.tsx            all the logic
+├── hooks/register.tsx            the hooks: band, status line, ledger, stats panel
+├── hooks/stats.ts                window math: value, pace, rates, curves
+├── hooks/cards.ts                the stats cards as SVG
+├── hooks/prices.ts               model prices
+├── hooks/format.ts               number and theme helpers
+├── tests/                        claude plugin test
 └── types/index.d.ts              state type contract
 docs/                             screenshots
 ```
