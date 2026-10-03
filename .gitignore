@@ -1,0 +1,3 @@
+.DS_Store
+# written by Claude Code when it loads the mod
+plugins/*/.claude-plugin/types/

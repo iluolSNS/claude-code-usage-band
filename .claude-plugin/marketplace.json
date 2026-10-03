@@ -1,0 +1,14 @@
+{
+  "name": "cyan-mods",
+  "owner": {
+    "name": "cyan"
+  },
+  "description": "cyan's personal Claude Code mods",
+  "plugins": [
+    {
+      "name": "usage-band",
+      "source": "./plugins/usage-band",
+      "description": "Usage pills above the prompt: rate limits, tokens, live speed, cost, context"
+    }
+  ]
+}
