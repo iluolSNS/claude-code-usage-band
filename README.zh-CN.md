@@ -21,6 +21,7 @@
 | **cache** | 从缓存读取的 token。每次请求都会带上完整对话，重复的部分走缓存，所以这个数最大，但单价约为普通输入的十分之一 |
 | **$** | 本会话累计费用，和 `/cost` 一致 |
 | **ctx** | 上下文占用。设置了 `autoCompactWindow`（自动压缩窗口）时按它计算，否则按模型的上下文上限计算 |
+| **📈** | 打开或关闭胶囊上方的[窗口统计](#窗口统计)。只有 5h / 7d 限额时才显示 |
 
 进度条颜色：限额用到 90% 以上变红，用量比时间进度快 15% 以上变黄；上下文 60% 以上变黄，80% 以上变红。
 
@@ -155,7 +156,12 @@ plugins/usage-band/
 ├── tests/                        claude plugin test
 └── types/index.d.ts              状态类型定义
 docs/                             效果图
+CHANGELOG.md                      更新日志
 ```
+
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md) 和 [Releases](https://github.com/iluolSNS/claude-code-usage-band/releases)。
 
 ## 许可证
 

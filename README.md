@@ -21,6 +21,7 @@ A Claude Code **mod** that shows rate limits, tokens, live tokens per second, co
 | **cache** | Tokens read from the prompt cache. Every request carries the whole conversation and the repeated part comes from the cache, so this number is the largest, but it costs about a tenth of regular input |
 | **$** | Session cost so far, the same figure as `/cost` |
 | **ctx** | Context fill, measured against your `autoCompactWindow` (auto-compact window) when one is set, otherwise against the model's context window |
+| **📈** | Opens or closes the [window stats](#window-stats) above the pills. Shown only when you have 5h / 7d limits |
 
 Bar colors: a rate limit turns red at 90% and amber when usage runs more than 15% ahead of time; context turns amber at 60% and red at 80%.
 
@@ -155,7 +156,12 @@ plugins/usage-band/
 ├── tests/                        claude plugin test
 └── types/index.d.ts              state type contract
 docs/                             screenshots
+CHANGELOG.md                      release notes
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) and the [releases](https://github.com/iluolSNS/claude-code-usage-band/releases).
 
 ## License
 
