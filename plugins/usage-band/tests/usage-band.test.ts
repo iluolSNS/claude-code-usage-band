@@ -198,28 +198,22 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('desktop: a narrow band shows one card at a time, with both cards when wide', async ($, on) => {
+test('desktop: both cards side by side, however narrow the band', async ($, on) => {
   world(on)
   await $.session.start({ cwd: '/tmp' } as never)
-  const narrow = await $.ui.mount({
-    plugin: 'usage-band',
-    surface: 'desktop',
-    component: 'AbovePrompt',
-    props: { ...PROPS, bodyColumns: 90 },
-  })
-  await narrow.press({ key: 'stats' })
-  const cards = async () => String((await narrow.find({ type: 'Svg' }))?.props.source)
-  expect(await cards()).toContain('5h window')
-  expect(await cards()).not.toContain('7d window')
-  await narrow.press({ key: 'window' })
-  expect(await cards()).toContain('7d window')
-  expect(await cards()).not.toContain('5h window')
-
-  const wide = await $.ui.mount({ plugin: 'usage-band', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
-  const both = String((await wide.find({ type: 'Svg' }))?.props.source)
-  expect(both).toContain('5h window')
-  expect(both).toContain('7d window')
-  expect(await wide.find({ key: 'window' })).toBeUndefined()
+  for (const bodyColumns of [80, 200]) {
+    const ui = await $.ui.mount({
+      plugin: 'usage-band',
+      surface: 'desktop',
+      component: 'AbovePrompt',
+      props: { ...PROPS, bodyColumns },
+    })
+    if (!(await ui.find({ key: 'view-chart' }))) await ui.press({ key: 'stats' })
+    const source = String((await ui.find({ type: 'Svg' }))?.props.source)
+    expect(source).toContain('5h window')
+    expect(source).toContain('7d window')
+    await ui.unmount()
+  }
 })
 
 test('desktop: a window the ledger has not measured says what it waits for', async ($, on) => {

@@ -55,7 +55,7 @@ Press **📈** at the end of the pills (or run `/usage-band stats`) to open two 
   <img alt="Window stats, by-model view: tokens left in each window for Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 4.5" src="docs/stats-model-light.png">
 </picture>
 
-**◐** cycles the colors between following the system, light and dark (the cards and pills are drawn as images, so "auto" follows your OS, not the app). The cards are side by side when there is room; in a narrower band they show one at a time, with a **5h window** / **7d window** button to switch. In the terminal the same figures show as two lines of text.
+**◐** cycles the colors between following the system, light and dark (the cards and pills are drawn as images, so "auto" follows your OS, not the app). The two cards always sit side by side and scale down with the band. In the terminal the same figures show as two lines of text.
 
 How the numbers are made:
 
