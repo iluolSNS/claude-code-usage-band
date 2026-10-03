@@ -209,9 +209,16 @@ test('desktop: both cards side by side, however narrow the band', async ($, on) 
       props: { ...PROPS, bodyColumns },
     })
     if (!(await ui.find({ key: 'view-chart' }))) await ui.press({ key: 'stats' })
-    const source = String((await ui.find({ type: 'Svg' }))?.props.source)
+    const cards = await ui.find({ type: 'Svg' })
+    const source = String(cards?.props.source)
     expect(source).toContain('5h window')
     expect(source).toContain('7d window')
+    // the drawings leave room for the buttons beside them
+    const room = bodyColumns * 7.9
+    expect(Number(cards?.props.width) <= room - 130).toBe(true)
+    const pills = ((await ui.drawn()) as { children?: unknown[] }).children?.[1] as { children?: Array<{ children?: Array<{ props?: { width?: number } }> }> }
+    const bandWidth = Number(pills?.children?.[0]?.children?.[0]?.props?.width)
+    expect(bandWidth > 0 && bandWidth <= room - 60).toBe(true)
     await ui.unmount()
   }
 })

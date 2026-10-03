@@ -63,8 +63,11 @@ const FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const ch = (fs: number) => fs * 0.614
 const H = 30
 const PX_PER_COL = 7.9 // desktop: CSS px per band cell, measured
-// desktop: what the 📈 button after the pills takes, in CSS px
-const STATS_BUTTON_PX = 36
+// desktop: room kept free beside the drawings, in CSS px, so the buttons stay
+// in view even when the width estimated from the band's cells runs over: the
+// 📈 button after the pills, and the Chart / By model column after the cards
+const STATS_BUTTON_PX = 60
+const TOGGLES_PX = 130
 
 type Tone = 'teal' | 'violet' | 'red' | 'green' | 'cyan' | 'blue' | 'gold' | 'slate'
 
@@ -732,7 +735,10 @@ export const register: Register = on => {
         : []),
       ...(s.ctx ? [windowPill(s.ctx, 'slate', 'doc')] : []),
     ]
-    const row = band(specs, hasWindows ? room - STATS_BUTTON_PX : room, th)
+    const bandRoom = hasWindows ? room - STATS_BUTTON_PX : room
+    const row = band(specs, bandRoom, th)
+    // a row wider than its room is scaled down to it, not left to push 📈 out
+    const bandWidth = Math.min(row.width, bandRoom)
 
     // The SVGs sit in boxes that may shrink, so a narrower slot than the
     // estimate scales them down instead of pushing the buttons out of view
@@ -740,10 +746,11 @@ export const register: Register = on => {
     let cards = null
     if (windows.length > 0) {
       const c = statsSvg(windows, view, th)
+      const width = Math.min(c.width, Math.max(240, room - TOGGLES_PX))
       cards = (
         <Box flexDirection="row" alignItems="flex-start" marginBottom={1}>
           <Box flexShrink={1} minWidth={0}>
-            <Svg source={c.svg} alt={c.alt} />
+            <Svg source={c.svg} alt={c.alt} width={width} height={Math.round((c.height * width) / c.width)} />
           </Box>
           <Box flexDirection="column" flexShrink={0} marginLeft={1} gap={1}>
             <Button key="view-chart" label="Chart" variant={view === 'chart' ? 'primary' : 'secondary'} onPress={setView('chart')} />
@@ -759,7 +766,7 @@ export const register: Register = on => {
         {cards}
         <Box flexDirection="row" alignItems="center">
           <Box flexShrink={1} minWidth={0}>
-            <Svg key="band" source={row.svg} alt={row.alt} />
+            <Svg source={row.svg} alt={row.alt} width={bandWidth} height={Math.round((30 * bandWidth) / row.width)} />
           </Box>
           {hasWindows && (
             <Box flexShrink={0} marginLeft={1}>
