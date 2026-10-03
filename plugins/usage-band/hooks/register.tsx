@@ -1,7 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { Speed, Totals } from '../types'
+import type { Speed, StatsView, Theme, Totals } from '../types'
+import { CARD_GAP, CARD_W, statsAlt, statsSvg } from './cards'
+import { fmtLeft, themeCss } from './format'
+import { codeOf, listCost } from './prices'
+import { addSample, addTokens, addUsd, isRow, isSampleLog, KEEP_MS, prune, SPAN, windowStats } from './stats'
+import type { Row, SampleLog, Usage, WindowKind, WindowStats } from './stats'
 
 const ZERO: Totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 const totals = atom({ plugin: 'usage-band', key: 'totals' } as const, ZERO)
@@ -10,6 +15,10 @@ const speed = atom({ plugin: 'usage-band', key: 'speed' } as const, null as Spee
 const charsPerToken = atom({ plugin: 'usage-band', key: 'charsPerToken' } as const, 3)
 // How often the live rate is redrawn while a response streams
 const LIVE_MS = 400
+// The stats cards above the pills, and how they draw
+const statsOpen = atom({ plugin: 'usage-band', key: 'statsOpen' } as const, false)
+const statsView = atom({ plugin: 'usage-band', key: 'statsView' } as const, 'chart' as StatsView)
+const theme = atom({ plugin: 'usage-band', key: 'theme' } as const, 'auto' as Theme)
 
 const WINDOW_MS: Record<string, number> = {
   five_hour: 5 * 3600_000,
@@ -30,16 +39,6 @@ function fmtShort(n: number): string {
   if (n < 1_000_000) return Math.round(n / 1000) + 'k'
   const m = n / 1_000_000
   return (Number.isInteger(m) ? m : m.toFixed(1)) + 'M'
-}
-
-function fmtLeft(ms: number): string {
-  const mins = Math.max(0, Math.round(ms / 60_000))
-  const d = Math.floor(mins / 1440)
-  const h = Math.floor((mins % 1440) / 60)
-  const m = mins % 60
-  if (d > 0) return `${d}d ${h}h`
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
 }
 
 type Window = { label: string; pct: number; elapsed: number | null; left: string | null; isContext?: boolean }
@@ -64,11 +63,13 @@ const FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const ch = (fs: number) => fs * 0.614
 const H = 30
 const PX_PER_COL = 7.9 // desktop: CSS px per band cell, measured
+// desktop: what the 📈 button and the cards' toggle column take, in CSS px
+const STATS_BUTTON_PX = 40
+const TOGGLES_PX = 130
 
 type Tone = 'teal' | 'violet' | 'red' | 'green' | 'cyan' | 'blue' | 'gold' | 'slate'
 
-const STYLE = `
-<style>
+const BAND_LIGHT = `
   .t{font-family:${FONT};font-size:14px;fill:#3b4440}
   .b{font-weight:700;fill:#1f2523}
   .d{fill:#6b7571}
@@ -85,7 +86,8 @@ const STYLE = `
   .gold .bg{fill:#f3eacf}.gold .ic{stroke:#b58a1c}.gold .coin{fill:#b58a1c}
   .slate .bg{fill:#e3e7eb}.slate .ic{stroke:#5b6875}
   .red .lb{fill:#c4553f}.green .lb{fill:#4f9a52}.blue .lb{fill:#4b63c9}
-  @media (prefers-color-scheme: dark){
+`
+const BAND_DARK = `
     .t{fill:#d6dcd9}.b{fill:#f3f6f4}.d{fill:#9aa4a0}
     .track{fill:#ffffff22}.tick{fill:#eef2f0}.sep{fill:#ffffff26}
     .teal .bg{fill:#1f3a31}.teal .ic{stroke:#6cc3a2}
@@ -97,8 +99,7 @@ const STYLE = `
     .gold .bg{fill:#3d3218}.gold .ic{stroke:#e0b94a}.gold .coin{fill:#e0b94a}
     .slate .bg{fill:#2b3138}.slate .ic{stroke:#a9b5c1}
     .red .lb{fill:#ec8a74}.green .lb{fill:#7cc77f}.blue .lb{fill:#8ea0f0}
-  }
-</style>`
+`
 
 const ICON = {
   gauge: '<path d="M2.8 11.5a5.5 5.5 0 1 1 10.4 0"/><path d="M8 10.5l2.6-3"/>',
@@ -225,8 +226,8 @@ function labelPill(label: string, tone: Tone, value: string, alt: string): Spec 
 // One row of pills tiled across `room` px: the tightest tier that fits, the
 // spare width shared out among the pills; if even the last tier is wider,
 // the SVG keeps its viewBox and the surface scales it down.
-function band(specs: Spec[], room: number): { svg: string; width: number; alt: string } {
-  let tier = TIERS[0]
+function band(specs: Spec[], room: number, th: Theme): { svg: string; width: number; alt: string } {
+  let tier = TIERS[0]!
   let need = 0
   for (const t of TIERS) {
     tier = t
@@ -248,7 +249,7 @@ function band(specs: Spec[], room: number): { svg: string; width: number; alt: s
   const alt = pills.map(p => p.alt).join('; ')
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${H}" viewBox="0 0 ${width} ${H}">` +
-    STYLE + `<style>.t{font-size:${tier.fs}px}</style>` + body + `</svg>`
+    `<style>${themeCss(BAND_LIGHT, BAND_DARK, th)}.t{font-size:${tier.fs}px}</style>` + body + `</svg>`
   return { svg, width, alt }
 }
 
@@ -344,6 +345,156 @@ function statusLine(s: Snapshot): string {
   return parts.join('  ·  ')
 }
 
+// ---------- the request ledger ----------
+//
+// Every request's tokens and dollars, kept in the plugin's store so all the
+// sessions that share a rate-limit window count toward it. Each session
+// writes only its own ledger key; the percentage samples are merged on
+// write. The module's copy is rebuilt from the store on every load.
+
+const PREFIX = 'ledger:'
+const FLUSH_MS = 20_000
+const OTHERS_TTL = 60_000
+// how often an unchanged reading is still written down
+const SAMPLE_GAP: Record<WindowKind, number> = { five_hour: 10 * 60_000, seven_day: 30 * 60_000 }
+
+let ownKey: string | null = null
+let own: Row[] = []
+let others: Row[] = []
+let othersAt = 0
+let since = 0
+let isDirty = false
+// the session's cost when last seen, to turn it into per-request dollars
+let lastUsd: number | null = null
+const samples: Partial<Record<WindowKind, SampleLog>> = {}
+
+async function loadLedger($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  ownKey = PREFIX + (await $.session.id())
+  const stored = (await $.store.get(ownKey)) as { rows?: unknown[] } | undefined
+  own = prune((stored?.rows ?? []).filter(isRow), now)
+  const s = await $.store.get('since')
+  since = typeof s === 'number' ? s : now
+  if (typeof s !== 'number') await $.store.set('since', since)
+  lastUsd = (await $.session.usage()).cost?.usd ?? null
+  await loadOthers($, true)
+}
+
+// Every other session's rows, re-read now and then; stale keys are dropped
+async function loadOthers($: EngineInterface, force = false): Promise<void> {
+  const now = await $.clock.now()
+  if (!force && now - othersAt < OTHERS_TTL) return
+  othersAt = now
+  const rows: Row[] = []
+  for (const key of await $.store.keys()) {
+    if (key === ownKey) continue
+    if (key.startsWith(PREFIX)) {
+      const v = (await $.store.get(key)) as { rows?: unknown[] } | undefined
+      const kept = prune((v?.rows ?? []).filter(isRow), now)
+      if (!kept.length) await $.store.delete(key)
+      else rows.push(...kept)
+    } else if (key.startsWith('pct:')) {
+      const kind = key.slice(4) as WindowKind
+      const v = await $.store.get(key)
+      if (kind in SPAN && isSampleLog(v)) samples[kind] = v
+    }
+  }
+  others = rows
+}
+
+function allRows(): Row[] {
+  return own.length ? [...others, ...own] : others
+}
+
+async function recordTokens($: EngineInterface, code: string, u: Usage): Promise<void> {
+  const now = await $.clock.now()
+  const row = addTokens(own, now, code, u)
+  const usd = (await $.session.usage()).cost?.usd
+  // no cost ledger on this host: price the request ourselves
+  if (usd === undefined) addUsd(own, now, listCost(code, u), row)
+  else accrue(usd, now, row)
+  isDirty = true
+}
+
+// The session's cost moved: what it grew by goes to the latest row
+function accrue(usd: number, now: number, row?: Row): void {
+  if (lastUsd === null || usd < lastUsd - Math.max(0.5, lastUsd * 0.2)) {
+    // first reading, or the session's cost started over (/clear)
+    lastUsd = usd
+    return
+  }
+  if (usd <= lastUsd) return
+  addUsd(own, now, usd - lastUsd, row)
+  lastUsd = usd
+  isDirty = true
+}
+
+async function flush($: EngineInterface): Promise<void> {
+  if (!isDirty || !ownKey) return
+  isDirty = false
+  const now = await $.clock.now()
+  own = prune(own, now)
+  try {
+    await $.store.set(ownKey, { rows: own })
+  } catch {
+    // the store is full: keep this session's last day at full detail
+    own = own.filter(r => r[0] * 60_000 > now - KEEP_MS / 8)
+    await $.store.set(ownKey, { rows: own }).catch(() => undefined)
+  }
+}
+
+function flushEvery($: EngineInterface): void {
+  $.clock.every(FLUSH_MS, () => void flush($))
+}
+
+// A rate-limit reading: written to the shared log when it says something new
+async function recordSamples($: EngineInterface, limits: readonly SessionRateLimit[]): Promise<void> {
+  const now = await $.clock.now()
+  for (const r of limits) {
+    const kind = r.kind as WindowKind
+    if (!(kind in SPAN) || !r.resetsAt) continue
+    const resetsAt = Date.parse(r.resetsAt)
+    if (!Number.isFinite(resetsAt)) continue
+    const key = `pct:${kind}`
+    const stored = await $.store.get(key)
+    const base = isSampleLog(stored) ? stored : samples[kind]
+    const next = addSample(base, resetsAt, now, r.percentUsed, SAMPLE_GAP[kind])
+    if (base) samples[kind] = base
+    if (!next) continue
+    samples[kind] = next
+    await $.store.set(key, next).catch(() => undefined)
+  }
+}
+
+// ---------- the stats cards ----------
+
+const KINDS: WindowKind[] = ['five_hour', 'seven_day']
+
+async function windowsNow($: EngineInterface): Promise<WindowStats[]> {
+  const usage = await $.session.usage()
+  const now = await $.clock.now()
+  const rows = allRows()
+  const out: WindowStats[] = []
+  for (const kind of KINDS) {
+    const r = usage.rateLimits.find(x => x.kind === kind)
+    const resetsAt = r?.resetsAt ? Date.parse(r.resetsAt) : NaN
+    if (!r || !Number.isFinite(resetsAt)) continue
+    out.push(windowStats({ kind, pct: r.percentUsed, resetsAt, now, rows, since, samples: samples[kind] }))
+  }
+  return out
+}
+
+async function toggleStats($: EngineInterface): Promise<boolean> {
+  const next = !(await read($, statsOpen))
+  await update($, statsOpen, () => next)
+  await $.store.set('statsOpen', next)
+  if (next) {
+    await loadOthers($, true)
+    $.ui.invalidate('ui.render')
+  }
+  return next
+}
+
 // ---------- the mod ----------
 
 type Mode = 'band' | 'status'
@@ -363,23 +514,44 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     mode = (await $.store.get('mode')) === 'status' ? 'status' : 'band'
+    const open = (await $.store.get('statsOpen')) === true
+    const view = (await $.store.get('statsView')) === 'model' ? 'model' : 'chart'
+    const th = await $.store.get('theme')
+    await update($, statsOpen, () => open)
+    await update($, statsView, () => view)
+    await update($, theme, () => (th === 'light' || th === 'dark' ? th : 'auto'))
     await $.command.register({
       name: 'usage-band',
-      description: 'Switch the usage display: above the prompt (band) or the status line (status)',
-      argumentHint: '[band|status]',
+      description: 'Switch the usage display: above the prompt (band) or the status line (status); stats opens the window cards',
+      argumentHint: '[band|status|stats]',
       immediate: true,
     })
-    // keep the reset countdowns fresh
-    $.clock.every(60_000, () => void refresh($))
+    await loadLedger($)
+    flushEvery($)
+    // keep the reset countdowns fresh, and the other sessions' requests
+    $.clock.every(60_000, async () => {
+      if (await read($, statsOpen)) await loadOthers($)
+      await recordSamples($, (await $.session.usage()).rateLimits)
+      await refresh($)
+    })
     void loadCompactWindow($).then(() => refresh($))
     return next(e)
   })
 
   on('command.run', { command: 'usage-band' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
+    if (arg === 'stats') {
+      if (mode !== 'band') {
+        mode = 'band'
+        await $.store.set('mode', mode)
+        $.ui.status(undefined)
+      }
+      const isOpen = await toggleStats($)
+      return { text: isOpen ? 'Window stats now show above the pills.' : 'Window stats hidden.' }
+    }
     const want: Mode | null =
       arg === '' ? (mode === 'band' ? 'status' : 'band') : arg === 'band' || arg === 'status' ? arg : null
-    if (!want) return { text: 'Usage: /usage-band [band|status] (no argument toggles)' }
+    if (!want) return { text: 'Usage: /usage-band [band|status|stats] (no argument toggles band and status)' }
     mode = want
     await $.store.set('mode', mode)
     if (mode === 'band') $.ui.status(undefined)
@@ -393,7 +565,14 @@ export const register: Register = on => {
   // rate limits or cost moved
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('context')) await loadCompactWindow($)
+    if (e.changed.includes('cost') && e.cost) accrue(e.cost.usd, await $.clock.now())
+    if (e.changed.includes('rateLimits')) await recordSamples($, e.rateLimits)
     await refresh($)
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    await flush($)
     return next(e)
   })
 
@@ -436,6 +615,12 @@ export const register: Register = on => {
         cacheRead: t.cacheRead + u.cache_read_input_tokens,
         cacheWrite: t.cacheWrite + u.cache_creation_input_tokens,
       }))
+      await recordTokens($, codeOf(u.model), {
+        input: u.input_tokens,
+        output: u.output_tokens,
+        cacheRead: u.cache_read_input_tokens,
+        cacheWrite: u.cache_creation_input_tokens,
+      })
     }
     if (isMain) {
       const seconds = firstAt ? ((await $.clock.now()) - firstAt) / 1000 : 0
@@ -461,8 +646,27 @@ export const register: Register = on => {
     if (s.isEmpty) return next(e)
     const tpsLabel = tpsText(s.tps)
 
+    // the stats cards: open, and only with a rate-limit window to describe
+    const isOpen = await read($, statsOpen)
+    const view = await read($, statsView)
+    const th = await read($, theme)
+    const hasWindows = !!(s.five || s.seven)
+    const windows = isOpen && hasWindows ? await windowsNow($) : []
+
+    const setView = (v: StatsView) => async () => {
+      await update($, statsView, () => v)
+      await $.store.set('statsView', v)
+    }
+    const nextTheme = async () => {
+      const order: Theme[] = ['auto', 'light', 'dark']
+      const v = order[(order.indexOf(await read($, theme)) + 1) % order.length] ?? 'auto'
+      await update($, theme, () => v)
+      await $.store.set('theme', v)
+      $.ui.toast(`usage-band theme: ${v === 'auto' ? 'follow the system' : v}`)
+    }
+
     if (e.surface === 'terminal') {
-      const { Box, Text } = $.ui.resolve(e)
+      const { Box, Text, Button } = $.ui.resolve(e)
       const bar = (w: Window) => {
         const n = Math.round(Math.min(1, w.pct / 100) * 8)
         return '█'.repeat(n) + '░'.repeat(8 - n)
@@ -476,21 +680,37 @@ export const register: Register = on => {
           </Text>
         )
       return (
-        <Box flexWrap="wrap">
-          {win(s.five, 'green')}
-          {win(s.seven, 'magenta')}
-          <Text color="red">in {fmtTokens(s.input)}  </Text>
-          <Text color="green">out {fmtTokens(s.output)}  </Text>
-          <Text color="cyan">⚡ {tpsLabel}  </Text>
-          <Text color="blue">cache {fmtTokens(s.cache)}  </Text>
-          {s.usd !== undefined && <Text color="yellow">$ {s.usd.toFixed(2)}  </Text>}
-          {s.ctx && <Text dimColor>ctx {Math.round(s.ctx.pct)}%</Text>}
+        <Box flexDirection="column">
+          {windows.length > 0 && (
+            <Box flexDirection="column" marginBottom={1}>
+              {windows.map(w => (
+                <Text key={w.kind} color={w.kind === 'five_hour' ? 'green' : 'magenta'} wrap="wrap">
+                  {statsAlt(w, view)}
+                </Text>
+              ))}
+              <Box flexDirection="row" gap={1}>
+                <Button key="view-chart" label="Pace" variant={view === 'chart' ? 'primary' : 'secondary'} onPress={setView('chart')} />
+                <Button key="view-model" label="By model" variant={view === 'model' ? 'primary' : 'secondary'} onPress={setView('model')} />
+              </Box>
+            </Box>
+          )}
+          <Box flexWrap="wrap">
+            {win(s.five, 'green')}
+            {win(s.seven, 'magenta')}
+            <Text color="red">in {fmtTokens(s.input)}  </Text>
+            <Text color="green">out {fmtTokens(s.output)}  </Text>
+            <Text color="cyan">⚡ {tpsLabel}  </Text>
+            <Text color="blue">cache {fmtTokens(s.cache)}  </Text>
+            {s.usd !== undefined && <Text color="yellow">$ {s.usd.toFixed(2)}  </Text>}
+            {s.ctx && <Text dimColor>ctx {Math.round(s.ctx.pct)}%  </Text>}
+            {hasWindows && <Button key="stats" label="stats" plain dimColor={!isOpen} onPress={() => void toggleStats($)} />}
+          </Box>
         </Box>
       )
     }
 
     if (e.surface !== 'desktop' && e.surface !== 'vscode' && e.surface !== 'mobile') return next(e)
-    const { Box, Svg } = $.ui.resolve(e)
+    const { Box, Svg, Button } = $.ui.resolve(e)
 
     // Room for the row, in CSS px, estimated from the band's cell width
     const room = Math.max(320, e.props.bodyColumns * PX_PER_COL)
@@ -513,12 +733,37 @@ export const register: Register = on => {
         : []),
       ...(s.ctx ? [windowPill(s.ctx, 'slate', 'doc')] : []),
     ]
-    const row = band(specs, room)
+    // the 📈 button after the pills takes a little of the row
+    const row = band(specs, hasWindows ? room - STATS_BUTTON_PX : room, th)
 
-    // No width: the SVG takes its own width, scaled down if the slot is narrower
+    let cards = null
+    if (windows.length > 0) {
+      const cardRoom = Math.max(320, room - TOGGLES_PX)
+      // side by side while each card keeps most of its size, else stacked
+      const isStacked = windows.length > 1 && cardRoom < windows.length * CARD_W * 0.72 + CARD_GAP
+      const c = statsSvg(windows, view, th, isStacked)
+      const width = Math.min(c.width, cardRoom)
+      cards = (
+        <Box flexDirection="row" alignItems="flex-start" marginBottom={1}>
+          <Svg source={c.svg} alt={c.alt} width={width} height={Math.round((c.height * width) / c.width)} />
+          <Box flexDirection="column" marginLeft={1} gap={1}>
+            <Button key="view-chart" label="Chart" variant={view === 'chart' ? 'primary' : 'secondary'} onPress={setView('chart')} />
+            <Button key="view-model" label="By model" variant={view === 'model' ? 'primary' : 'secondary'} onPress={setView('model')} />
+            <Button key="theme" label="◐" plain dimColor onPress={() => void nextTheme()} />
+          </Box>
+        </Box>
+      )
+    }
+
     return (
-      <Box flexDirection="row">
-        <Svg key="band" source={row.svg} alt={row.alt} />
+      <Box flexDirection="column">
+        {cards}
+        <Box flexDirection="row" alignItems="center">
+          <Svg key="band" source={row.svg} alt={row.alt} />
+          {hasWindows && (
+            <Button key="stats" label="📈" plain dimColor={!isOpen} onPress={() => void toggleStats($)} />
+          )}
+        </Box>
       </Box>
     )
   })
