@@ -1,8 +1,8 @@
 # usage-band
 
-一个 Claude Code **mod**：在输入框上方用一排彩色胶囊，实时显示限额、token、速度、费用和上下文占用。
+[English](README.en.md) | 中文
 
-A Claude Code mod that shows rate limits, tokens, live tokens/sec, cost and context fill as a row of pills above the prompt.
+一个 Claude Code **mod**：在输入框上方用一排彩色胶囊，实时显示限额、token、速度、费用和上下文占用。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/band-dark.png">
