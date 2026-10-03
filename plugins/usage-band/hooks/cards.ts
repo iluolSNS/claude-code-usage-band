@@ -12,8 +12,9 @@ import type { StatsView } from '../types'
 export type View = StatsView
 
 export const CARD_W = 540
-export const CARD_H = 334
-export const CARD_GAP = 16
+// compact: the band above the prompt is short
+export const CARD_H = 216
+export const CARD_GAP = 14
 
 const SANS = `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif`
 
@@ -56,84 +57,93 @@ function t(x: number, y: number, s: string, cls: string, size: number, extra = '
 
 const unitLabel = (w: WindowStats) => (w.unit === 'h' ? '/h' : '/day')
 
+// left edge and right edge of the card's content
+const L = 22
+const R = CARD_W - 22
+
 function header(w: WindowStats): string {
-  const W = CARD_W
-  let out = `<rect class="card" x="1" y="1" width="${W - 2}" height="${CARD_H - 2}" rx="16"/>`
+  let out = `<rect class="card" x="1" y="1" width="${CARD_W - 2}" height="${CARD_H - 2}" rx="14"/>`
   const title =
     w.value === null ? `${w.label} window` : `${w.label} window ≈ ${fmtUsdWhole(w.value)} at API prices`
-  out += t(28, 46, esc(title), 't1', 21, 'font-weight="500"')
+  out += t(L, 29, esc(title), 't1', 18, 'font-weight="600"')
   const parts = [`used ${Math.round(w.pct)}%`]
   if (w.spent !== null) parts.push((w.isPartial ? '≈' : '') + fmtUsd(w.spent))
   if (w.tokens > 0) parts.push(`${fmtBig(w.tokens)} tokens`)
-  if (w.isPartial) parts.push(`tracked ${fmtLeft(w.now - Math.max(w.start, trackedFrom(w)))}`)
-  else if (w.value === null) parts.push('measuring API value…')
-  out += t(28, 80, esc(parts.join(' · ')), 't2', 16.5)
+  if (w.isPartial) parts.push(`tracked ${fmtLeft(w.now - w.trackedSince)}`)
+  if (w.value === null) parts.push('measuring API value')
+  out += t(L, 49, esc(parts.join(' · ')), 't2', 13.5)
   return out
 }
 
-// where the drawn curve begins: the window's start, or the ledger's
-function trackedFrom(w: WindowStats): number {
-  return w.untracked ? w.start + w.untracked[1]![0] * w.span : w.start
+// Why there is no value yet, in a few words
+export function measuring(w: WindowStats): string {
+  return w.pct >= 100
+    ? 'Limit reached before tracking began; value comes with the next window'
+    : 'Measuring the API value: needs about 1% more use of this window'
+}
+
+// 16% · 2.4%
+function fmtPct(p: number): string {
+  return (p >= 10 ? Math.round(p) : Math.round(p * 10) / 10) + '%'
 }
 
 // ---------- chart view ----------
 
 function chartCard(w: WindowStats): string {
-  const W = CARD_W
   let out = header(w)
   const s = w.status
   const reset = fmtLeft(w.remaining)
+  const vy = 77
 
   // the verdict
-  let left: string
-  let right: string
   if (s.kind === 'pace') {
-    left = t(28, 124, `On pace to finish at <tspan class="ok">${Math.round(s.projected)}%</tspan>`, 't1', 17.5, 'font-weight="600"')
-    right = t(W - 26, 124, `reset in ${reset}`, 'ok', 15.5, 'text-anchor="end" font-weight="600"')
+    out += t(L, vy, `On pace to finish at <tspan class="ok">${Math.round(s.projected)}%</tspan>`, 't1', 15.5, 'font-weight="600"')
+    out += t(R, vy, `reset in ${reset}`, 'ok', 13.5, 'text-anchor="end" font-weight="600"')
   } else if (s.kind === 'hit') {
-    left = t(28, 124, `Limit hit in ${fmtLeft(s.hitIn)}`, 'red', 17.5, 'font-weight="600"')
-    right = t(W - 26, 124, `${fmtLeft(s.beforeReset)} before reset`, 'red', 15.5, 'text-anchor="end" font-weight="600"')
+    out += t(L, vy, `Limit hit in ${fmtLeft(s.hitIn)}`, 'red', 15.5, 'font-weight="600"')
+    out += t(R, vy, `${fmtLeft(s.beforeReset)} before reset`, 'red', 13.5, 'text-anchor="end" font-weight="600"')
   } else if (s.kind === 'reached') {
-    left = t(28, 124, 'Limit reached', 'red', 17.5, 'font-weight="600"')
-    right = t(W - 26, 124, `reset in ${reset}`, 't2', 15.5, 'text-anchor="end" font-weight="600"')
+    out += t(L, vy, 'Limit reached', 'red', 15.5, 'font-weight="600"')
+    out += t(R, vy, `reset in ${reset}`, 't2', 13.5, 'text-anchor="end" font-weight="600"')
   } else {
-    left = t(28, 124, 'Too early to tell the pace', 't1', 17.5, 'font-weight="600"')
-    right = t(W - 26, 124, `reset in ${reset}`, 't2', 15.5, 'text-anchor="end" font-weight="600"')
+    out += t(L, vy, 'Too early to tell the pace', 't1', 15.5, 'font-weight="600"')
+    out += t(R, vy, `reset in ${reset}`, 't2', 13.5, 'text-anchor="end" font-weight="600"')
   }
-  out += left + right
-  out += `<line class="rule" x1="16" y1="136" x2="${W - 16}" y2="136"/>`
+  out += `<line class="rule" x1="12" y1="86" x2="${CARD_W - 12}" y2="86"/>`
 
-  // the two rates
+  // the two rates: in dollars once the value is known, else in points of the limit
+  const isHit = s.kind === 'hit'
+  const hasUsd = w.value !== null
   const equiv = (rate: number | null) =>
     rate === null ? '' : `≈ ${fmtBig(tokensFor(rate, w.ref, w.mix))} ${MODEL_SHORT[w.ref]}`
-  const rateText = (rate: number | null) => (rate === null ? '—' : fmtRate(rate) + unitLabel(w))
-  out += t(28, 162, 'Average so far', 't1', 16.5)
-  out += t(W - 165, 162, rateText(w.avgRate), 't1', 18, 'text-anchor="end" font-weight="500"')
-  out += t(W - 26, 162, esc(equiv(w.avgRate)), 't2', 15, 'text-anchor="end"')
-  const isHit = s.kind === 'hit'
-  out += `<rect class="tint" x="16" y="178" width="${W - 32}" height="34" rx="9"/>`
-  out += t(28, 201, isHit ? 'Slow down to' : 'Spend up to', 't1', 16.5)
-  out += t(W - 165, 201, rateText(w.allowedRate), isHit ? 'red' : 't1', 18.5, 'text-anchor="end" font-weight="600"')
-  out += t(W - 26, 201, esc(equiv(w.allowedRate)), 't2', 15, 'text-anchor="end"')
+  const rateText = (usd: number | null, pct: number | null) =>
+    hasUsd ? (usd === null ? '—' : fmtRate(usd) + unitLabel(w)) : pct === null ? '—' : fmtPct(pct) + unitLabel(w)
+  out += t(L, 108, 'Average so far', 't1', 14.5)
+  out += t(R - 130, 108, rateText(w.avgRate, w.avgPctRate), 't1', 15.5, 'text-anchor="end" font-weight="500"')
+  out += t(R, 108, esc(hasUsd ? equiv(w.avgRate) : 'of the limit'), 't2', 13, 'text-anchor="end"')
+  out += `<rect class="tint" x="12" y="117" width="${CARD_W - 24}" height="26" rx="7"/>`
+  out += t(L, 135, isHit ? 'Slow down to' : 'Spend up to', 't1', 14.5)
+  out += t(R - 130, 135, rateText(w.allowedRate, w.allowedPctRate), isHit ? 'red' : 't1', 15.5, 'text-anchor="end" font-weight="600"')
+  out += t(R, 135, esc(hasUsd ? equiv(w.allowedRate) : 'of the limit'), 't2', 13, 'text-anchor="end"')
 
   out += chart(w)
 
   // the window before
   if (w.prev) {
     const name = w.kind === 'seven_day' ? 'Last week' : 'Last 5h window'
-    out += `<line class="prev" x1="28" y1="310" x2="48" y2="310" stroke-width="2"/>`
-    out += t(58, 316, `${name}: ${Math.round(w.prev.atNow)}% by now, ${Math.round(w.prev.atEnd)}% at reset`, 't2', 15.5)
+    out += `<line class="prev" x1="${L}" y1="203" x2="${L + 16}" y2="203" stroke-width="2"/>`
+    out += t(L + 24, 207, `${name}: ${Math.round(w.prev.atNow)}% by now, ${Math.round(w.prev.atEnd)}% at reset`, 't2', 13)
   } else {
-    out += t(28, 316, `No previous ${w.label} window to compare`, 't2', 15.5)
+    out += t(L, 207, `No previous ${w.label} window to compare yet`, 't2', 13)
   }
   return out
 }
 
 function chart(w: WindowStats): string {
-  const x0 = 28
-  const x1 = CARD_W - 78
-  const yTop = 224
-  const yBot = 286
+  const x0 = L
+  const x1 = CARD_W - 58
+  const yTop = 152
+  const yBot = 188
   const yMax = 108
   const X = (f: number) => (x0 + f * (x1 - x0)).toFixed(1)
   const Y = (p: number) => (yBot - (Math.min(p, yMax) / yMax) * (yBot - yTop)).toFixed(1)
@@ -142,19 +152,19 @@ function chart(w: WindowStats): string {
   let out = ''
 
   out += `<line class="rule" x1="${x0}" y1="${yBot}" x2="${x1}" y2="${yBot}"/>`
-  out += `<line class="reds" x1="${x0}" y1="${yLimit}" x2="${x1}" y2="${yLimit}" stroke-width="1.6" stroke-dasharray="3 4"/>`
-  out += t(x1 + 10, Number(yLimit) + 5, 'limit', 'red', 15)
+  out += `<line class="reds" x1="${x0}" y1="${yLimit}" x2="${x1}" y2="${yLimit}" stroke-width="1.4" stroke-dasharray="3 4"/>`
+  out += t(x1 + 8, Number(yLimit) + 4.5, 'limit', 'red', 13)
 
-  if (w.prev) out += `<polyline class="prev" points="${line(w.prev.curve)}" stroke-width="1.8" stroke-linejoin="round"/>`
+  if (w.prev) out += `<polyline class="prev" points="${line(w.prev.curve)}" stroke-width="1.6" stroke-linejoin="round"/>`
 
   const c = w.curve
   if (c.length >= 2) {
     const area = `${X(c[0]![0])},${yBot} ${line(c)} ${X(c[c.length - 1]![0])},${yBot}`
     out += `<polygon class="area" points="${area}"/>`
-    out += `<polyline class="as" points="${line(c)}" fill="none" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`
+    out += `<polyline class="as" points="${line(c)}" fill="none" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`
   }
   if (w.untracked) {
-    out += `<polyline class="as" points="${line(w.untracked)}" fill="none" stroke-width="1.6" stroke-dasharray="2 4" opacity=".6"/>`
+    out += `<polyline class="as" points="${line(w.untracked)}" fill="none" stroke-width="1.5" stroke-dasharray="2 4" opacity=".6"/>`
   }
 
   const nf = w.frac
@@ -162,74 +172,69 @@ function chart(w: WindowStats): string {
   const s = w.status
   // the budget: from now to the limit at the reset
   if (np < 100) {
-    out += `<polyline class="as" points="${X(nf)},${Y(np)} ${X(1)},${yLimit}" fill="none" stroke-width="1.8" opacity=".4"/>`
+    out += `<polyline class="as" points="${X(nf)},${Y(np)} ${X(1)},${yLimit}" fill="none" stroke-width="1.6" opacity=".4"/>`
   }
   // the projection at the pace so far
   if (s.kind === 'pace') {
-    out += `<polyline class="as" points="${X(nf)},${Y(np)} ${X(1)},${Y(s.projected)}" fill="none" stroke-width="2.4" stroke-dasharray="6 4"/>`
+    out += `<polyline class="as" points="${X(nf)},${Y(np)} ${X(1)},${Y(s.projected)}" fill="none" stroke-width="2.2" stroke-dasharray="6 4"/>`
   } else if (s.kind === 'hit') {
     const fh = nf + s.hitIn / w.span
-    out += `<polyline class="reds" points="${X(nf)},${Y(np)} ${X(fh)},${yLimit}" fill="none" stroke-width="2.4" stroke-dasharray="6 4"/>`
-    out += `<circle class="redf" cx="${X(fh)}" cy="${yLimit}" r="4.5"/>`
+    out += `<polyline class="reds" points="${X(nf)},${Y(np)} ${X(fh)},${yLimit}" fill="none" stroke-width="2.2" stroke-dasharray="6 4"/>`
+    out += `<circle class="redf" cx="${X(fh)}" cy="${yLimit}" r="4"/>`
   }
-  out += `<circle class="af ring" cx="${X(nf)}" cy="${Y(np)}" r="5" stroke-width="2"/>`
+  out += `<circle class="af ring" cx="${X(nf)}" cy="${Y(np)}" r="4.5" stroke-width="2"/>`
   return out
 }
 
 // ---------- by-model view ----------
 
 function modelCard(w: WindowStats): string {
-  const W = CARD_W
   let out = header(w)
-  const colC = W - 148
-  out += `<rect class="tint" x="${colC - 60}" y="102" width="120" height="190" rx="10"/>`
-  out += t(28, 128, 'If you use only…', 't1', 16.5)
-  out += t(colC, 128, 'tokens left', 'af', 16.5, 'text-anchor="middle" font-weight="600"')
-  out += t(W - 26, 128, 'used', 't2', 16.5, 'text-anchor="end"')
-  out += `<line class="rule" x1="16" y1="140" x2="${W - 16}" y2="140"/>`
+  const colC = CARD_W - 142
+  out += `<rect class="tint" x="${colC - 54}" y="60" width="108" height="130" rx="9"/>`
+  out += t(L, 77, 'If you use only…', 't1', 14.5)
+  out += t(colC, 77, 'tokens left', 'af', 14.5, 'text-anchor="middle" font-weight="600"')
+  out += t(R, 77, 'used', 't2', 14.5, 'text-anchor="end"')
+  out += `<line class="rule" x1="12" y1="86" x2="${CARD_W - 12}" y2="86"/>`
 
   const left = FAMILIES.map(f => (w.left === null ? null : tokensFor(w.left, f, w.mix)))
   const max = Math.max(1, ...left.map(v => v ?? 0))
-  const barX = 152
-  const barW = colC - 60 - 22 - barX
+  const barX = 136
+  const barW = colC - 54 - 16 - barX
   FAMILIES.forEach((f, i) => {
-    const y = 168 + i * 36
+    const y = 108 + i * 24
     const v = left[i] ?? null
-    out += `<circle cx="36" cy="${y - 6}" r="6.5" fill="${MODEL_COLOR[f]}"/>`
-    out += t(52, y, MODEL_NAME[f], 't1', 16.5)
-    out += `<rect class="track" x="${barX}" y="${y - 10}" width="${barW}" height="8" rx="4"/>`
+    out += `<circle cx="${L + 6}" cy="${y - 5}" r="5.5" fill="${MODEL_COLOR[f]}"/>`
+    out += t(L + 18, y, MODEL_NAME[f], 't1', 14.5)
+    out += `<rect class="track" x="${barX}" y="${y - 9}" width="${barW}" height="7" rx="3.5"/>`
     if (v !== null && v > 0) {
-      out += `<rect x="${barX}" y="${y - 10}" width="${Math.max(4, (v / max) * barW).toFixed(1)}" height="8" rx="4" fill="${MODEL_COLOR[f]}"/>`
+      out += `<rect x="${barX}" y="${y - 9}" width="${Math.max(4, (v / max) * barW).toFixed(1)}" height="7" rx="3.5" fill="${MODEL_COLOR[f]}"/>`
     }
-    out += t(colC, y + 1, v === null ? '—' : fmtBig(v), 't1', 18.5, 'text-anchor="middle" font-weight="600"')
-    out += t(W - 26, y, w.used[f] > 0 ? fmtBig(w.used[f]) : 'none', 't2', 15.5, 'text-anchor="end"')
+    out += t(colC, y + 0.5, v === null ? '…' : fmtBig(v), v === null ? 't2' : 't1', 15.5, 'text-anchor="middle" font-weight="600"')
+    out += t(R, y, w.used[f] > 0 ? fmtBig(w.used[f]) : 'none', 't2', 13.5, 'text-anchor="end"')
   })
 
-  const foot =
-    w.left === null
-      ? 'Measuring this window’s API value…'
-      : `Same ${fmtUsd(w.left)} left, spent at each model’s price`
-  out += t(28, 318, esc(foot), 't2', 15.5)
+  const foot = w.left === null ? measuring(w) : `Same ${fmtUsd(w.left)} left, spent at each model’s price`
+  out += t(L, 207, esc(foot), 't2', 13)
   return out
 }
 
 // ---------- the drawing ----------
 
+// The cards side by side, one per window given
 export function statsSvg(
   windows: readonly WindowStats[],
   view: View,
   theme: Theme,
-  isStacked: boolean,
 ): { svg: string; width: number; height: number; alt: string } {
   const n = windows.length
-  const width = isStacked ? CARD_W : n * CARD_W + (n - 1) * CARD_GAP
-  const height = isStacked ? n * CARD_H + (n - 1) * CARD_GAP : CARD_H
+  const width = n * CARD_W + Math.max(0, n - 1) * CARD_GAP
+  const height = CARD_H
   let body = ''
   windows.forEach((w, i) => {
-    const x = isStacked ? 0 : i * (CARD_W + CARD_GAP)
-    const y = isStacked ? i * (CARD_H + CARD_GAP) : 0
     const cls = w.kind === 'five_hour' ? 'w5' : 'w7'
-    body += `<g class="${cls}" transform="translate(${x},${y})">${view === 'chart' ? chartCard(w) : modelCard(w)}</g>`
+    const x = i * (CARD_W + CARD_GAP)
+    body += `<g class="${cls}" transform="translate(${x},0)">${view === 'chart' ? chartCard(w) : modelCard(w)}</g>`
   })
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
@@ -241,7 +246,7 @@ export function statsSvg(
 export function statsAlt(w: WindowStats, view: View): string {
   const head =
     w.value === null
-      ? `${w.label} window: ${Math.round(w.pct)}% used, API value not measured yet.`
+      ? `${w.label} window: ${Math.round(w.pct)}% used. ${measuring(w)}.`
       : `${w.label} window ≈ ${fmtUsdWhole(w.value)} at API prices, ${Math.round(w.pct)}% used.`
   if (view === 'model') {
     if (w.left === null) return head

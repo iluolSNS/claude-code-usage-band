@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { Speed, StatsView, Theme, Totals } from '../types'
+import type { Speed, StatsView, StatsWindow, Theme, Totals } from '../types'
 import { CARD_GAP, CARD_W, statsAlt, statsSvg } from './cards'
 import { fmtLeft, themeCss } from './format'
 import { codeOf, listCost } from './prices'
@@ -18,6 +18,7 @@ const LIVE_MS = 400
 // The stats cards above the pills, and how they draw
 const statsOpen = atom({ plugin: 'usage-band', key: 'statsOpen' } as const, false)
 const statsView = atom({ plugin: 'usage-band', key: 'statsView' } as const, 'chart' as StatsView)
+const statsWindow = atom({ plugin: 'usage-band', key: 'statsWindow' } as const, 'five_hour' as StatsWindow)
 const theme = atom({ plugin: 'usage-band', key: 'theme' } as const, 'auto' as Theme)
 
 const WINDOW_MS: Record<string, number> = {
@@ -63,9 +64,12 @@ const FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const ch = (fs: number) => fs * 0.614
 const H = 30
 const PX_PER_COL = 7.9 // desktop: CSS px per band cell, measured
-// desktop: what the 📈 button and the cards' toggle column take, in CSS px
-const STATS_BUTTON_PX = 40
-const TOGGLES_PX = 130
+// desktop: what the cards' button column takes, in CSS px
+const TOGGLES_PX = 110
+// and the 📈 button after the pills
+const STATS_BUTTON_PX = 36
+// both cards side by side only while each keeps this much of its size
+const MIN_PAIR_SCALE = 0.8
 
 type Tone = 'teal' | 'violet' | 'red' | 'green' | 'cyan' | 'blue' | 'gold' | 'slate'
 
@@ -517,6 +521,8 @@ export const register: Register = on => {
     const open = (await $.store.get('statsOpen')) === true
     const view = (await $.store.get('statsView')) === 'model' ? 'model' : 'chart'
     const th = await $.store.get('theme')
+    const win = await $.store.get('statsWindow')
+    await update($, statsWindow, () => (win === 'seven_day' ? 'seven_day' : 'five_hour'))
     await update($, statsOpen, () => open)
     await update($, statsView, () => view)
     await update($, theme, () => (th === 'light' || th === 'dark' ? th : 'auto'))
@@ -650,12 +656,18 @@ export const register: Register = on => {
     const isOpen = await read($, statsOpen)
     const view = await read($, statsView)
     const th = await read($, theme)
+    const shownWindow = await read($, statsWindow)
     const hasWindows = !!(s.five || s.seven)
     const windows = isOpen && hasWindows ? await windowsNow($) : []
 
     const setView = (v: StatsView) => async () => {
       await update($, statsView, () => v)
       await $.store.set('statsView', v)
+    }
+    const otherWindow = async () => {
+      const v: StatsWindow = (await read($, statsWindow)) === 'five_hour' ? 'seven_day' : 'five_hour'
+      await update($, statsWindow, () => v)
+      await $.store.set('statsWindow', v)
     }
     const nextTheme = async () => {
       const order: Theme[] = ['auto', 'light', 'dark']
@@ -733,22 +745,29 @@ export const register: Register = on => {
         : []),
       ...(s.ctx ? [windowPill(s.ctx, 'slate', 'doc')] : []),
     ]
-    // the 📈 button after the pills takes a little of the row
     const row = band(specs, hasWindows ? room - STATS_BUTTON_PX : room, th)
 
+    // The SVGs sit in boxes that may shrink, so a narrower slot than the
+    // estimate scales them down instead of pushing the buttons out of view
     let cards = null
     if (windows.length > 0) {
-      const cardRoom = Math.max(320, room - TOGGLES_PX)
-      // side by side while each card keeps most of its size, else stacked
-      const isStacked = windows.length > 1 && cardRoom < windows.length * CARD_W * 0.72 + CARD_GAP
-      const c = statsSvg(windows, view, th, isStacked)
-      const width = Math.min(c.width, cardRoom)
+      const cardRoom = room - TOGGLES_PX
+      // both side by side when they keep most of their size, else one at a time
+      const isPair = windows.length > 1 && cardRoom >= 2 * CARD_W * MIN_PAIR_SCALE + CARD_GAP
+      const shown = isPair ? windows : [windows.find(w => w.kind === shownWindow) ?? windows[0]!]
+      const c = statsSvg(shown, view, th)
+      const other = windows.find(w => w !== shown[0])
       cards = (
         <Box flexDirection="row" alignItems="flex-start" marginBottom={1}>
-          <Svg source={c.svg} alt={c.alt} width={width} height={Math.round((c.height * width) / c.width)} />
-          <Box flexDirection="column" marginLeft={1} gap={1}>
+          <Box flexShrink={1} minWidth={0}>
+            <Svg source={c.svg} alt={c.alt} />
+          </Box>
+          <Box flexDirection="column" flexShrink={0} marginLeft={1} gap={1}>
             <Button key="view-chart" label="Chart" variant={view === 'chart' ? 'primary' : 'secondary'} onPress={setView('chart')} />
             <Button key="view-model" label="By model" variant={view === 'model' ? 'primary' : 'secondary'} onPress={setView('model')} />
+            {!isPair && other && (
+              <Button key="window" label={`${other.label} window`} onPress={() => void otherWindow()} />
+            )}
             <Button key="theme" label="◐" plain dimColor onPress={() => void nextTheme()} />
           </Box>
         </Box>
@@ -759,9 +778,13 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {cards}
         <Box flexDirection="row" alignItems="center">
-          <Svg key="band" source={row.svg} alt={row.alt} />
+          <Box flexShrink={1} minWidth={0}>
+            <Svg key="band" source={row.svg} alt={row.alt} />
+          </Box>
           {hasWindows && (
-            <Button key="stats" label="📈" plain dimColor={!isOpen} onPress={() => void toggleStats($)} />
+            <Box flexShrink={0} marginLeft={1}>
+              <Button key="stats" label="📈" plain dimColor={!isOpen} onPress={() => void toggleStats($)} />
+            </Box>
           )}
         </Box>
       </Box>

@@ -197,3 +197,50 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ key: 'view-chart' })).toBeUndefined()
   })
 }
+
+test('desktop: a narrow band shows one card at a time, with both cards when wide', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/tmp' } as never)
+  const narrow = await $.ui.mount({
+    plugin: 'usage-band',
+    surface: 'desktop',
+    component: 'AbovePrompt',
+    props: { ...PROPS, bodyColumns: 90 },
+  })
+  await narrow.press({ key: 'stats' })
+  const cards = async () => String((await narrow.find({ type: 'Svg' }))?.props.source)
+  expect(await cards()).toContain('5h window')
+  expect(await cards()).not.toContain('7d window')
+  await narrow.press({ key: 'window' })
+  expect(await cards()).toContain('7d window')
+  expect(await cards()).not.toContain('5h window')
+
+  const wide = await $.ui.mount({ plugin: 'usage-band', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  const both = String((await wide.find({ type: 'Svg' }))?.props.source)
+  expect(both).toContain('5h window')
+  expect(both).toContain('7d window')
+  expect(await wide.find({ key: 'window' })).toBeUndefined()
+})
+
+test('desktop: a window the ledger has not measured says what it waits for', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { since: NOW })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('session.id', () => ({ value: 'me' }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: NOW,
+      context: { window: 200_000 },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 61, resetsAt: new Date(NOW + 3 * DAY).toISOString() }],
+      cost: { usd: 0 },
+    },
+  }))
+  await $.session.start({ cwd: '/tmp' } as never)
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  await ui.press({ key: 'stats' })
+  await ui.press({ key: 'view-model' })
+  const source = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(source).toContain('needs about 1% more use')
+  expect(source).not.toContain('—')
+})

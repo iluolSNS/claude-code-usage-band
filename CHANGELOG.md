@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 (2026-10-03)
+
+### Fixed
+
+- The window stats no longer overflow the band in the desktop app: the cards are compact (about a third shorter), and when the band is too narrow for both they show one at a time with a **5h window** / **7d window** button to switch, instead of stacking two tall cards that had to be scrolled.
+- The 📈 button stays in view at the end of the pills instead of being pushed past the edge.
+- A window that is still being measured shows its pace in points of the limit (for example `19%/day`, `slow down to 10%/day`) instead of empty rows and dashes, and says what it is waiting for.
+- `tracked …` counts from when the ledger started, not from the latest reading.
+
 ## 1.2.0 (2026-10-03)
 
 ### Added
