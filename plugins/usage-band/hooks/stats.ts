@@ -138,8 +138,9 @@ export type WindowStats = {
   // how far through the window, 0 to 1
   frac: number
   remaining: number
-  // the ledger began after the window did
+  // the ledger began after the window did, at this time
   isPartial: boolean
+  trackedSince: number
   // dollars and tokens the ledger saw in the window
   usd: number
   tokens: number
@@ -153,6 +154,9 @@ export type WindowStats = {
   unit: 'h' | 'day'
   avgRate: number | null
   allowedRate: number | null
+  // the same two in points of the limit, known without dollars
+  avgPctRate: number | null
+  allowedPctRate: number | null
   // the family most of the dollars went to
   ref: Family
   status: Status
@@ -222,6 +226,8 @@ export function windowStats(w: WindowInput): WindowStats {
   const unitMs = w.kind === 'five_hour' ? 3600_000 : 86400_000
   const avgRate = spent === null || elapsed <= 0 ? null : (spent / elapsed) * unitMs
   const allowedRate = left === null || remaining <= 0 ? null : (left / remaining) * unitMs
+  const avgPctRate = elapsed <= 0 ? null : (pct / elapsed) * unitMs
+  const allowedPctRate = remaining <= 0 ? null : (Math.max(0, 100 - pct) / remaining) * unitMs
 
   let status: Status
   if (pct >= 100) status = { kind: 'reached' }
@@ -285,6 +291,7 @@ export function windowStats(w: WindowInput): WindowStats {
     frac,
     remaining,
     isPartial,
+    trackedSince: Math.max(start, w.since),
     usd,
     tokens,
     used,
@@ -295,6 +302,8 @@ export function windowStats(w: WindowInput): WindowStats {
     unit: w.kind === 'five_hour' ? 'h' : 'day',
     avgRate,
     allowedRate,
+    avgPctRate,
+    allowedPctRate,
     ref,
     status,
     curve,

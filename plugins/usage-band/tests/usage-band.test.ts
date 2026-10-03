@@ -197,3 +197,51 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ key: 'view-chart' })).toBeUndefined()
   })
 }
+
+test('desktop: both cards side by side, however narrow the band', async ($, on) => {
+  world(on)
+  await $.session.start({ cwd: '/tmp' } as never)
+  for (const bodyColumns of [80, 200]) {
+    const ui = await $.ui.mount({
+      plugin: 'usage-band',
+      surface: 'desktop',
+      component: 'AbovePrompt',
+      props: { ...PROPS, bodyColumns },
+    })
+    if (!(await ui.find({ key: 'view-chart' }))) await ui.press({ key: 'stats' })
+    const cards = await ui.find({ type: 'Svg' })
+    const source = String(cards?.props.source)
+    expect(source).toContain('5h window')
+    expect(source).toContain('7d window')
+    // the drawings leave room for the buttons beside them
+    const room = bodyColumns * 7.9
+    expect(Number(cards?.props.width) <= room - 130).toBe(true)
+    const pills = ((await ui.drawn()) as { children?: unknown[] }).children?.[1] as { children?: Array<{ children?: Array<{ props?: { width?: number } }> }> }
+    const bandWidth = Number(pills?.children?.[0]?.children?.[0]?.props?.width)
+    expect(bandWidth > 0 && bandWidth <= room - 60).toBe(true)
+    await ui.unmount()
+  }
+})
+
+test('desktop: a window the ledger has not measured says what it waits for', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { since: NOW })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('session.id', () => ({ value: 'me' }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: NOW,
+      context: { window: 200_000 },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 61, resetsAt: new Date(NOW + 3 * DAY).toISOString() }],
+      cost: { usd: 0 },
+    },
+  }))
+  await $.session.start({ cwd: '/tmp' } as never)
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+  await ui.press({ key: 'stats' })
+  await ui.press({ key: 'view-model' })
+  const source = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(source).toContain('needs about 1% more use')
+  expect(source).not.toContain('—')
+})

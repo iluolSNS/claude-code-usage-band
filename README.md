@@ -55,12 +55,12 @@ Press **📈** at the end of the pills (or run `/usage-band stats`) to open two 
   <img alt="Window stats, by-model view: tokens left in each window for Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 4.5" src="docs/stats-model-light.png">
 </picture>
 
-**◐** cycles the colors between following the system, light and dark (the cards and pills are drawn as images, so "auto" follows your OS, not the app). The cards are side by side when there is room and stacked when there is not. In the terminal the same figures show as two lines of text.
+**◐** cycles the colors between following the system, light and dark (the cards and pills are drawn as images, so "auto" follows your OS, not the app). The two cards always sit side by side and scale down with the band. In the terminal the same figures show as two lines of text.
 
 How the numbers are made:
 
 - The mod writes every request (model, tokens, cost) to a small ledger in its own store, one per session, so **all your Claude Code sessions on this machine count toward the windows they share**. Entries older than 8 days are dropped.
-- **It starts counting when you install it.** A window that began earlier shows `tracked 2h 10m` and is measured from the first reading after that; the next window is fully tracked.
+- **It starts counting when you install it.** A window that began earlier shows `tracked 2h 10m` and is measured from the first reading after that; until its percentage has moved about 1%, the card shows your pace in points of the limit (`19%/day`) instead of dollars. The next window is fully tracked.
 - **Usage outside Claude Code on this machine** (claude.ai, the apps, another computer) moves the percentage but not the ledger, so it makes the dollar value read low.
 - The previous-window comparison appears once the mod has watched a full window.
 - Model prices (per million tokens, input / output / cache read): Fable 5.1 $10 / $50 / $0.25, Opus 5.5 $4 / $20 / $0.20, Sonnet 5.5 $2 / $10 / $0.20, Haiku 4.5 $1 / $5 / $0.10; cache writes at 1.25× input. They live in `hooks/prices.ts`.

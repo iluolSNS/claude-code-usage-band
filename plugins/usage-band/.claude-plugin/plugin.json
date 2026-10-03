@@ -1,6 +1,6 @@
 {
   "name": "usage-band",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pills above the prompt: 5h/7d rate limits, session tokens, live tokens/sec, cost and context window, with window stats cards (API value, pace, tokens left per model). /usage-band switches to the status line.",
   "author": {
     "name": "cyan"
