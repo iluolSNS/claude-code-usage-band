@@ -8,7 +8,7 @@
     {
       "name": "usage-band",
       "source": "./plugins/usage-band",
-      "description": "Usage pills above the prompt: rate limits, tokens, live speed, cost, context"
+      "description": "Usage pills above the prompt: rate limits, tokens, live speed, cost, context; window stats with API value, pace and tokens left per model"
     }
   ]
 }
